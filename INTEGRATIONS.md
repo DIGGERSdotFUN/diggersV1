@@ -111,11 +111,17 @@ indexers can pick it up without an RPC call.
 
 ## Graduation criteria
 
-A token graduates (locks its name and ticker) when **all three** are met:
+We don't have standard gratuation, because our pools starts directly in Uniswap V4 so you can mock it when the token reach $X MC
+
+## Blue Chip criteria
+
+A token become Blue Chip and can locks its name and ticker (noone else can copy them) when **all three** are met:
 
 1. **Holders** >= 500
 2. **Cumulative volume** >= 540 ETH
 3. **Mean daily market cap** >= 270 ETH
+
+If the token loses these criteria, it gets downgraded until it reaches them all three back.
 
 All measured on-chain from pool legs only (sybil defense).
 
