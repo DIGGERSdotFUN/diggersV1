@@ -76,6 +76,13 @@ packages, and everything compiles with `solc ^0.8.35`.
   540+ ETH cumulative volume, and a 270+ ETH mean daily market cap. All
   three are measured on-chain from pool legs only.
 
+## Integrations
+
+Aggregators, wallets, and portfolio trackers — see
+[INTEGRATIONS.md](./INTEGRATIONS.md) for public REST endpoints (token info,
+Uniswap token list), deployed contract addresses, on-chain metadata, and
+graduation criteria.
+
 ## Building
 
 The sources have no framework coupling. To compile them, drop `contracts/`
