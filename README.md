@@ -66,7 +66,127 @@ Creator calls create()
 
 ---
 
-## Repository layout
+## How Diggers is different
+
+Every EVM launchpad before Diggers follows the same playbook: deploy a token,
+pair it with ETH on a bonding curve, wait for it to "graduate" to a real DEX
+(Uniswap, Raydium), and hope the migration doesn't get sniped. Diggers throws
+that entire model away.
+
+| | Traditional launchpad (pump.fun, etc.) | Diggers |
+|---|---|---|
+| **Pool at launch** | Bonding curve (custom AMM). The real Uniswap pool only exists after graduation. Bots snipe the migration tx | Uniswap V4 pool from block one. No bonding curve, no migration, no snipe window |
+| **Liquidity** | Removable by the deployer or migration contract. Rug vector | The Launchpad is the sole LP and has **no withdraw function**. Locked forever by code, not by promise |
+| **Supply** | Often mintable, or hidden admin functions | Fixed 1B supply, non-mintable, burnable. `totalSupply` only goes down |
+| **Sells** | Require an approve tx (or wallet signature). Users forget to revoke | Approve-free. The token trusts the Launchpad under two hard conditions (your tokens, inside the sell flow). Nothing to revoke |
+| **Fee model** | Platform takes a cut; creator gets nothing, or a one-time payout | Creator picks their own pool fee (1–5%) and an immutable fee-split table (up to 10 recipients). Fees flow forever via pull payments |
+| **Graduation** | "Market cap reaches X" → migrate to DEX. Often gamed, centrally decided | Already on Uniswap V4. "Graduation" means Blue Chip status: 500 holders + 540 ETH volume + 270 ETH mcap. No migration needed — the pool is the same pool |
+| **Admin keys** | Pausable, upgradeable, owner can freeze/seize | No pause, no proxy, no upgrade path. One bounded `owner` for config only (fee wallet, airdrop start). Can be renounced forever |
+| **Token code** | Usually a vanilla ERC-20, or a proxy with hidden logic | 7-layer `_update` pipeline: anti-whale cap, approve-free sells, points, leaderboard, lazy settlement, graduation telemetry, vesting locks — all in one immutable contract |
+
+## What's new (never seen before on EVM)
+
+### Digging points & the daily traders contest
+
+Every pool trade on a Diggers token earns **digging points**. Buys are worth 4×
+the same-size sell. A rolling top-10 leaderboard tracks the highest scorers of
+each 24-hour epoch, and when the epoch ends, the top 10 split a daily airdrop
+pot (funded by the token-side LP fees that aren't burned). Settlement is lazy —
+it piggybacks on the first transfer after the deadline, so there is no keeper
+bot and no gas cost to the protocol.
+
+This is the first on-chain trade-to-earn contest that runs per-token, fully
+in the ERC-20's own `_update` hook, with no external oracle, no off-chain
+leaderboard, and no admin who picks winners.
+
+### On-chain name registry (contenders & reservations)
+
+Name and ticker are **case-insensitive registry keys** enforced byte-by-byte
+on-chain (A–Z → a–z fold, only ASCII alphanumeric + single internal spaces for
+names, alphanumeric only for symbols). Every launch locks both keys for 1 hour.
+If the coin graduates in its first 24 hours, the first minter holds the name
+free for that window. After that, anyone can pay to extend a graduated token's
+reservation: **1 ETH = 365 days**, compounding, up to a 100-year cap. Proceeds
+go to the team treasury via pull payments.
+
+No other launchpad has an on-chain DNS-like system where names can be contested,
+defended, and permanently secured by the community through economic skin in the
+game.
+
+### Approve-free sells
+
+The token's `transferFrom` skips the allowance check entirely when the caller is
+the Launchpad — and the Launchpad only ever pulls from `msg.sender` of the outer
+call, inside the sell flow. No approve transaction. No infinite allowance sitting
+in some contract. Nothing to revoke. One less transaction on every sell, and one
+less attack surface forever.
+
+### Buy-mining platform airdrop ($DIG)
+
+During a one-time 30-day window, every buy on any Diggers token mines $DIG
+platform coins to the buyer. The mint rate starts at 100,000 DIG per ETH of
+platform fee and halves every 7 days. After the window, `finalize()` pairs 10%
+of final supply with all accrued ETH on Uniswap V2 (LP burned permanently),
+mints 50% to the team, and unlocks transfers. Final split: 40% airdrop / 10%
+LP / 50% team — but the absolute numbers are entirely demand-driven. No
+pre-mine, no seed round, no VC allocation.
+
+### Creator fee-split tables
+
+At launch, the creator sets an immutable fee-split table with up to 10 ETH
+recipients (collaborators, artists, charities, DAOs) — each with a 1e18-scaled
+share. The table can be edited post-launch by the fee owner (who can also
+renounce, freezing it forever). Fees are pull payments, not push — no one can
+brick the protocol by reverting a receive.
+
+### Vesting locks (on-chain, in the ERC-20)
+
+Create-time distribution can lock tokens with tranche vesting: N equal slices
+over a duration, enforced in the token's own `_update`. Tokens stay in the
+holder's wallet (visible on explorers), but movement is gated. One lock per
+address, max 10 per token. No external vesting contract, no claim portal —
+it's in the token itself.
+
+## Graduation explained
+
+On traditional launchpads, "graduation" means migrating liquidity from a bonding
+curve to a real DEX. On Diggers, **the token is already on Uniswap V4 from block
+one** — there is nothing to migrate.
+
+Instead, graduation is a **Blue Chip status** that unlocks one privilege: the
+ability to permanently reserve your token's name and ticker on the on-chain
+registry. It is a badge of legitimacy, not a liquidity event.
+
+### The three criteria (all measured on-chain, pool legs only)
+
+| Criterion | Threshold | What it proves |
+|---|---|---|
+| **Holders** | ≥ 500 unique addresses | Real distribution, not a few whales |
+| **Volume** | ≥ 540 ETH cumulative | Sustained trading activity |
+| **Market cap** | ≥ 270 ETH mean-daily-tick mcap | The market values the token, not just trades it |
+
+All three are pure ETH constants — no oracle, no committee, no vote. The token
+contract itself tracks holders (pool buys add, zeroing removes), cumulative
+volume (priced at pool spot each leg), and daily closing ticks (one per UTC day).
+The graduation math computes the mean tick over the last 7 non-empty trading
+days and derives the ETH market cap from it.
+
+### How it works
+
+1. A token meets all three criteria.
+2. Anyone calls `graduate(token)` (or it auto-triggers on the next trade within
+   the first 24 hours).
+3. The contract sets `graduatedAt` and, if the token was the first to ever mint
+   its name/symbol objects and is still within its first 24h, it holds those
+   names for free during that window.
+4. After the free window, the community can `extendReservation` — 1 ETH buys
+   365 days of exclusive ownership over the name and ticker. Payments compound
+   (the clock never resets down), capped at 100 years.
+
+A graduated token that stops meeting the criteria loses its name on the next
+challenge. Names are earned and defended, not assigned.
+
+---
 
 ```
 contracts/
