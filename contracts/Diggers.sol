@@ -217,12 +217,13 @@ contract Diggers is DiggerV4Base, IDiggers {
         }
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Whether the airdrop window is currently open.
     function airdropActive() public view returns (bool) {
         return airdropStart != 0 && block.timestamp < airdropEnd;
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Start the one-month airdrop (owner-only, once, irreversible). Requires
+    ///         `teamShareWad` to already meet the 10% floor.
     function startAirdrop() external onlyOwner {
         if (airdropStart != 0) revert AirdropAlreadyStarted();
         if (teamShareWad < PLATFORM_SLICE_WAD) revert TeamShareTooLow();
@@ -233,7 +234,8 @@ contract Diggers is DiggerV4Base, IDiggers {
         emit AirdropStarted(start, end);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Set the global team share of ETH fees (owner-only). Must be ≤ 1e18 (100%),
+    ///         and ≥ 1e17 (10%) while the airdrop is live (that 10% funds the coin LP).
     function setTeamShareWad(uint256 newTeamShareWad) external onlyOwner {
         if (newTeamShareWad > WAD) revert TeamShareTooHigh();
         // While the airdrop is live the team side funds the 10% LP slice, so it may not
@@ -243,14 +245,15 @@ contract Diggers is DiggerV4Base, IDiggers {
         emit TeamShareUpdated(newTeamShareWad);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Rotate the team ETH fee-recipient wallet (owner-only). Already-owed
+    ///         balances stay claimable by the previous wallet.
     function setFeeRecipient(address newFeeRecipient) external onlyOwner {
         if (newFeeRecipient == address(0)) revert TreasuryRequired();
         feeRecipient = newFeeRecipient;
         emit FeeRecipientUpdated(newFeeRecipient);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Transfer protocol ownership to a new non-zero address (owner-only).
     function transferOwnership(address newOwner) external onlyOwner {
         if (newOwner == address(0)) revert OwnerRequired();
         address prev = owner;
@@ -258,7 +261,8 @@ contract Diggers is DiggerV4Base, IDiggers {
         emit OwnershipTransferred(prev, newOwner);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Renounce ownership forever — every owner function is then locked and the
+    ///         current config (split, wallets, airdrop window) freezes.
     function renounceOwnership() external onlyOwner {
         address prev = owner;
         owner = address(0);
@@ -272,17 +276,27 @@ contract Diggers is DiggerV4Base, IDiggers {
 
     // -------------------------------------------------------------- create
 
-    /// @inheritdoc IDiggers
-    /// @dev Convenience overload: no custom fee-split table, no distribution locks.
-    ///      `msg.value` must cover CREATION_FEE; the remainder runs an atomic initial
-    ///      buy routed to the creator (slippage 0).
+    /// @notice Deploy a token, initialize its V4 pool, and seed the entire supply as
+    ///         single-sided token liquidity in one transaction. Convenience overload: no
+    ///         custom fee-split table and no distribution locks. `msg.value` must cover
+    ///         `CREATION_FEE`; the remainder runs an atomic initial buy routed to the
+    ///         creator (slippage floor 0).
+    /// @param params Identity + LP fee + burn-share config (see `TokenParams`).
+    /// @return token Address of the new DiggersToken.
     function create(TokenParams calldata params) external payable returns (address token) {
         FeeSplit[] memory noSplits = new FeeSplit[](0);
         LockOrder[] memory noLocks = new LockOrder[](0);
         return _create(params, noSplits, noLocks, 0);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Full launch: deploy + seed, optionally set the creator fee-split table, run
+    ///         an atomic initial buy with `msg.value`, and distribute the purchased tokens
+    ///         across recipients with optional vesting locks — all in one transaction.
+    /// @param params Identity + LP fee + burn-share config (see `TokenParams`).
+    /// @param feeSplits Creator ETH fee-share table (≤10 rows, shares sum 1e18).
+    /// @param locks Distribution + vesting orders for the initial buy (≤10, shares sum 1e18).
+    /// @param initialBuyMinOut Minimum tokens the initial buy must return (slippage floor).
+    /// @return token Address of the new DiggersToken.
     function create(
         TokenParams calldata params,
         FeeSplit[] calldata feeSplits,
@@ -416,23 +430,27 @@ contract Diggers is DiggerV4Base, IDiggers {
 
     // ------------------------------------------------------------- registry
 
-    /// @inheritdoc IDiggers
+    /// @notice Extend the reservation on both of a graduated token's registry objects.
+    ///         Anyone may pay; 1 ETH = 365 days linear; each object's clock advances from
+    ///         `max(current, now) + bought`, capped at `now + 100y`. One payment covers
+    ///         both objects. Proceeds credit the team via the pull ledger. No refunds.
+    /// @param token The graduated token to reserve for.
     function extendReservation(address token) external payable {
         _requireToken(token);
         DiggerRegistryLib.extend(_registry, _graduatedAt, _tokenKeys, ethOwed, feeRecipient, token, msg.value);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Whether a name could be created right now (its reservation clock has lapsed).
     function isNameFree(string calldata name) external view returns (bool) {
         return DiggerRegistryLib.isNameFree(_registry, name);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Whether a symbol could be created right now (its reservation clock has lapsed).
     function isSymbolFree(string calldata symbol) external view returns (bool) {
         return DiggerRegistryLib.isSymbolFree(_registry, symbol);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Registry state for a name object and a symbol object (same shared set).
     function keyStateOf(string calldata name, string calldata symbol)
         external
         view
@@ -441,13 +459,13 @@ contract Diggers is DiggerV4Base, IDiggers {
         return DiggerRegistryLib.keyStateOf(_registry, name, symbol);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice The two registry objects `token` holds (folded name + folded symbol).
     function tokenKeys(address token) external view returns (TokenKeys memory) {
         _requireToken(token);
         return _tokenKeys[token];
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice When `token` graduated (unix seconds); 0 if it never has.
     function graduatedAt(address token) external view returns (uint64) {
         _requireToken(token);
         return _graduatedAt[token];
@@ -455,13 +473,24 @@ contract Diggers is DiggerV4Base, IDiggers {
 
     // ----------------------------------------------------------- graduation
 
-    /// @inheritdoc IDiggers
+    /// @notice Graduate a token once it meets all three criteria (≥500 holders, ≥540 ETH
+    ///         cumulative volume, ≥270 ETH mean-daily-tick market cap). Permissionless.
+    ///         Sets `graduatedAt`; if within the first 24h it freely reserves any object
+    ///         it was the first to mint. Usually automatic on trades; this is the explicit
+    ///         path for tokens that cross the line afterwards.
     function graduate(address token) external {
         _requireToken(token);
         DiggerGraduationLib.graduate(_registry, _graduatedAt, _tokenKeys, token);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Read-only graduation progress for UI progress bars.
+    /// @param token The token to inspect.
+    /// @return holders Current unique pool-verified holders.
+    /// @return volumeEth Cumulative ETH-equivalent volume (wei).
+    /// @return avgMcapEth Mean-tick market cap (wei).
+    /// @return freeWindowEndsAt End of the token's free 24h window (unix seconds).
+    /// @return reservedUntil Reservation clock covering both objects (min of the two).
+    /// @return passes Three criteria flags [holders, volume, mcap].
     function graduationProgress(address token)
         external
         view
@@ -480,12 +509,14 @@ contract Diggers is DiggerV4Base, IDiggers {
 
     // --------------------------------------------------------------- fees
 
-    /// @inheritdoc IDiggers
+    /// @notice Collect accrued LP fees from the V4 pool and split per protocol rules.
+    ///         ETH → team + platform + creator table (pull credits). Token-side → burn
+    ///         share burned + remainder to daily pot.
     function harvest(address token) external {
         _harvest(token);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Withdraw accumulated ETH fee credits from the pull-payment ledger.
     function claim() external nonReentrant {
         uint256 owed = ethOwed[msg.sender];
         if (owed == 0) revert NothingToClaim();
@@ -495,13 +526,13 @@ contract Diggers is DiggerV4Base, IDiggers {
         emit Claimed(msg.sender, owed);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Creator fee-split table size for a launched token.
     function feeSplitCount(address token) external view returns (uint8) {
         _requireToken(token);
         return _feeSplitCount[token];
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice One row of the creator fee-split table (`{to, share}`).
     function feeSplitAt(address token, uint256 index) external view returns (FeeSplit memory) {
         _requireToken(token);
         if (index >= _feeSplitCount[token]) revert UnknownToken();
@@ -510,41 +541,47 @@ contract Diggers is DiggerV4Base, IDiggers {
 
     // ---------------------------------------------------- per-token ownership
 
-    /// @inheritdoc IDiggers
+    /// @notice Replace a token's creator ETH fee-split table (fee owner only). 1–10 rows,
+    ///         every recipient non-zero, shares sum to exactly 1e18. Fully replaces the
+    ///         previous table; takes effect from the next harvest.
     function setFeeSplits(address token, FeeSplit[] calldata rows) external onlyFeeOwner(token) {
         // Validation + storage write + `FeeSplitUpdated` live in the create library
         // (delegatecall) to keep this bytecode off the singleton's EIP-170 budget.
         DiggerCreateLib.updateFeeSplits(_feeSplitCount, _feeSplits, token, rows);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Update a token's token-side burn share (burn owner only). `burnShareWad` is
+    ///         1e18-scaled and must be ≤ 1e18; the daily traders-airdrop pot receives the
+    ///         remainder. Takes effect from the next harvest.
     function setBurnShare(address token, uint256 burnShareWad) external onlyBurnOwner(token) {
         if (burnShareWad > WAD) revert BurnShareInvalid();
         _tokenRecords[token].burnShareWad = uint128(burnShareWad);
         emit BurnShareUpdated(token, burnShareWad);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Transfer a token's fee-split ownership to a new non-zero address (fee owner only).
     function transferFeeOwnership(address token, address newOwner) external onlyFeeOwner(token) {
         if (newOwner == address(0)) revert OwnerRequired();
         feeOwner[token] = newOwner;
         emit FeeOwnershipTransferred(token, msg.sender, newOwner);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Renounce a token's fee-split ownership forever — the ETH fee table freezes
+    ///         at its current config and fees keep flowing.
     function renounceFeeOwnership(address token) external onlyFeeOwner(token) {
         feeOwner[token] = address(0);
         emit FeeOwnershipTransferred(token, msg.sender, address(0));
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Transfer a token's burn-share ownership to a new non-zero address (burn owner only).
     function transferBurnOwnership(address token, address newOwner) external onlyBurnOwner(token) {
         if (newOwner == address(0)) revert OwnerRequired();
         burnOwner[token] = newOwner;
         emit BurnOwnershipTransferred(token, msg.sender, newOwner);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Renounce a token's burn-share ownership forever — the burn share freezes at
+    ///         its current value and fees keep flowing.
     function renounceBurnOwnership(address token) external onlyBurnOwner(token) {
         burnOwner[token] = address(0);
         emit BurnOwnershipTransferred(token, msg.sender, address(0));
@@ -552,24 +589,34 @@ contract Diggers is DiggerV4Base, IDiggers {
 
     // -------------------------------------------------------------- router
 
-    /// @inheritdoc IDiggers
+    /// @notice Buy tokens with exact ETH. Output goes directly from the PoolManager to
+    ///         `to` (defaults to `msg.sender` when zero). Mandatory slippage floor.
+    /// @param token Launched DiggersToken.
+    /// @param minOut Minimum tokens out.
+    /// @param to Recipient; address(0) means `msg.sender`.
     function buy(address token, uint256 minOut, address to) external payable {
         if (msg.value == 0) revert ZeroEth();
         _trade(token, true, msg.value, minOut, to == address(0) ? msg.sender : to, false);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Sell tokens for ETH. No approve needed — pulls directly from the caller to
+    ///         the PoolManager via the silent router exemption.
+    /// @param token Launched DiggersToken.
+    /// @param amountIn Tokens to sell (18 dec).
+    /// @param minOut Minimum ETH out (wei).
+    /// @param to ETH recipient; address(0) means `msg.sender`.
     function sell(address token, uint256 amountIn, uint256 minOut, address to) external {
         if (amountIn == 0) revert ZeroSwapAmount();
         _trade(token, false, amountIn, minOut, to == address(0) ? msg.sender : to, true);
     }
 
-    /// @inheritdoc IDiggers
-    /// @dev No swap, no ETH — pure token distribution — so it carries the `nonReentrant`
-    ///      latch outright (unlike buy/sell, whose only ETH-sending step self-guards inside
-    ///      `_harvest`). The approve-free pull moves ONLY the caller's own tokens: the token
-    ///      skips the allowance solely because the launchpad is the `transferFrom` caller and
-    ///      the launchpad only ever passes `from == msg.sender` of this outer call.
+    /// @notice Split the caller's own tokens across ≤10 recipients, optionally vesting each,
+    ///         in one transaction. Pulls `amount` from `msg.sender` approve-free (the launchpad
+    ///         only ever pulls `from == msg.sender` of the outer call). Pure p2p — no pool leg,
+    ///         so no points/volume/holder credit. The 2% first-day cap applies per recipient.
+    /// @param token Launched DiggersToken.
+    /// @param amount Tokens to pull from the caller (18 dec).
+    /// @param locks Distribution + vesting orders (1..10, shares sum 1e18).
     function transferAndLock(address token, uint256 amount, LockOrder[] calldata locks) external nonReentrant {
         _requireToken(token);
         if (amount == 0) revert ZeroSwapAmount();
@@ -580,13 +627,13 @@ contract Diggers is DiggerV4Base, IDiggers {
         _distribute(token, amount, locksMem);
     }
 
-    /// @inheritdoc IDiggers
-    /// @dev Mirrors `buy` (opportunistic `_maybeHarvest`, rich `Swapped`, auto-reserve) but
-    ///      routes the swap output to the launchpad for aggregation. The pool leg therefore
-    ///      lands on the points/cap-exempt launchpad — no points, holder, or volume credit,
-    ///      no `PoolTrade` — exactly like a create-time locked buy (sybil-neutral). NOT
-    ///      `nonReentrant`: `_maybeHarvest` self-guards `_harvest`, so latching here would
-    ///      double-acquire and revert.
+    /// @notice Buy with exact ETH, then split the purchased tokens across ≤10 recipients,
+    ///         optionally vesting each — the post-launch equivalent of a create-time locked
+    ///         initial buy. The swap output is aggregated on the launchpad (cap- and
+    ///         points-exempt) then distributed per `locks`.
+    /// @param token Launched DiggersToken.
+    /// @param minOut Minimum tokens the buy must return (slippage floor).
+    /// @param locks Distribution + vesting orders (1..10, shares sum 1e18).
     function buyAndLock(address token, uint256 minOut, LockOrder[] calldata locks) external payable {
         if (msg.value == 0) revert ZeroEth();
         _requireToken(token);
@@ -601,40 +648,47 @@ contract Diggers is DiggerV4Base, IDiggers {
         DiggerGraduationLib.autoReserve(_registry, _graduatedAt, _tokenKeys, token);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Quote tokens out for an exact ETH input (fee-inclusive, view-only).
     function quoteBuy(address token, uint256 ethIn) external view returns (uint256 amountOut) {
         return _quote(token, true, ethIn);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Quote ETH out for an exact token input (fee-inclusive, view-only).
     function quoteSell(address token, uint256 tokenIn) external view returns (uint256 amountOut) {
         return _quote(token, false, tokenIn);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Launch sqrt price for every pool (Q64.96), derived from `START_TICK`.
     function START_SQRT_PRICE_X96() external view returns (uint160) {
         return DiggerV4.getSqrtRatioAtTick(START_TICK);
     }
 
     // ------------------------------------------------------------------ views
 
-    /// @inheritdoc IDiggers
+    /// @notice Pool record for a launched token (creator, poolId, tick bounds, poolFee, burnShareWad).
     function tokenRecord(address token) external view returns (TokenRecord memory) {
         if (!isDiggersToken[token]) revert UnknownToken();
         return _tokenRecords[token];
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Monotonic nonce used in CREATE2 salts (creator, symbol, nonce).
     function createNonce() external view returns (uint256) {
         return _createNonce;
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice The V4 PoolManager this launchpad routes every pool through.
     function poolManager() external view returns (address) {
         return POOL_MANAGER;
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Live pool snapshot for indexer reconciliation. NOT a per-pageview read — the
+    ///         UI derives price/depth from the `Swapped`/`Created` log stream. Prefer events;
+    ///         use this only to periodically reconcile cached state against chain.
+    /// @return sqrtPriceX96 Current pool sqrt price (Q64.96).
+    /// @return tick Current pool tick.
+    /// @return liquidity Active liquidity of the single seeded position.
+    /// @return ethInPool Virtual ETH reserve of the position at spot (wei).
+    /// @return tokenInPool Virtual token reserve of the position at spot.
     function poolState(address token)
         external
         view
@@ -647,7 +701,9 @@ contract Diggers is DiggerV4Base, IDiggers {
         return (s.sqrtPriceX96, s.tick, s.liquidity, s.ethInPool, s.tokenInPool);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Exact uncollected LP fees awaiting the next harvest, for indexer reconciliation.
+    /// @return ethFees Uncollected ETH-side fees (wei).
+    /// @return tokenFees Uncollected token-side fees.
     function pendingFees(address token) external view returns (uint256 ethFees, uint256 tokenFees) {
         _requireToken(token);
         TokenRecord memory rec = _tokenRecords[token];
@@ -664,7 +720,8 @@ contract Diggers is DiggerV4Base, IDiggers {
         _;
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Emit `PoolTrade` for the calling token's pool leg. Only callable by a
+    ///         launched DiggersToken — guards against forged protocol events.
     function logPoolTrade(
         address trader,
         bool isBuy,
@@ -678,7 +735,7 @@ contract Diggers is DiggerV4Base, IDiggers {
         emit PoolTrade(msg.sender, trader, isBuy, tokenAmount, ethValue, tick, holdersAfter, volumeEthCumAfter, epoch);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Emit `PointsCredited` for the calling token.
     function logPoints(
         uint256 epoch,
         address trader,
@@ -690,7 +747,7 @@ contract Diggers is DiggerV4Base, IDiggers {
         emit PointsCredited(msg.sender, epoch, trader, isBuy, pointsEarned, newScore, lifetimeScore);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Emit `LeaderboardChanged` for the calling token.
     function logLeaderboard(uint256 epoch, address entrant, address evicted, uint256 entrantScore)
         external
         onlyLaunchedToken
@@ -698,12 +755,12 @@ contract Diggers is DiggerV4Base, IDiggers {
         emit LeaderboardChanged(msg.sender, epoch, entrant, evicted, entrantScore);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Emit `HolderCountChanged` for the calling token.
     function logHolderCount(address holder, bool added, uint32 holderCountAfter) external onlyLaunchedToken {
         emit HolderCountChanged(msg.sender, holder, added, holderCountAfter);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Emit `EpochSettled` for the calling token.
     function logEpochSettled(uint256 epoch, uint256 potPerWinner, uint256 rolledOver, uint64 nextDeadline)
         external
         onlyLaunchedToken
@@ -711,12 +768,12 @@ contract Diggers is DiggerV4Base, IDiggers {
         emit EpochSettled(msg.sender, epoch, potPerWinner, rolledOver, nextDeadline);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Emit `AirdropPaid` for the calling token.
     function logAirdropPaid(uint256 epoch, address winner, uint256 amount) external onlyLaunchedToken {
         emit AirdropPaid(msg.sender, epoch, winner, amount);
     }
 
-    /// @inheritdoc IDiggers
+    /// @notice Emit `LockSet` for the calling token.
     function logLockSet(address holder, uint128 total, uint64 start, uint64 duration, uint32 tranches)
         external
         onlyLaunchedToken
@@ -866,7 +923,9 @@ contract Diggers is DiggerV4Base, IDiggers {
         }
     }
 
-    /// @inheritdoc DiggerV4Base
+    /// @dev Transfers tokens for V4 settlement. If a sell payer is stashed in transient
+    ///      storage, pulls from that address via `transferFrom` (approve-free); otherwise
+    ///      sends from the launchpad's own balance.
     function _transferToken(address token, address to, uint256 amount) internal override {
         address payer = _loadSellPayer();
         if (payer != address(0)) {

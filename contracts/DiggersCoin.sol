@@ -122,7 +122,9 @@ contract DiggersCoin is IDiggersCoin {
 
     // ------------------------------------------------------------- lifecycle
 
-    /// @inheritdoc IDiggersCoin
+    /// @notice Wire in the Diggers launchpad exactly once (deployer-only). Breaks the
+    ///         coin<->launchpad circular deploy dependency: deploy coin, deploy Diggers
+    ///         with the coin address, then call `init(diggers)` before the first `create`.
     function init(address diggers) external {
         if (msg.sender != _deployer) revert NotDeployer();
         if (launchpad != address(0)) revert AlreadyInitialized();
@@ -130,7 +132,8 @@ contract DiggersCoin is IDiggersCoin {
         launchpad = diggers;
     }
 
-    /// @inheritdoc IDiggersCoin
+    /// @notice Rotate the team wallet that receives the 50% finalize mint. Gated by the
+    ///         launchpad owner; already-minted balances are unaffected.
     function setMintTeamWallet(address newMintTeamWallet) external {
         address pad = launchpad;
         if (pad == address(0)) revert NotInitialized();
@@ -140,7 +143,10 @@ contract DiggersCoin is IDiggersCoin {
         emit MintTeamWalletUpdated(newMintTeamWallet);
     }
 
-    /// @inheritdoc IDiggersCoin
+    /// @notice Mint airdrop coins to `to` for a pool buy. Only callable by a token
+    ///         launched through the Diggers launchpad; reverts after the airdrop window.
+    ///         Silently mints nothing on zero/dust input so a buy is never bricked.
+    ///         `potEthWei` is the trade's 10% platform fee slice (estimated, wei).
     function creditBuy(address to, uint256 potEthWei) external {
         address pad = launchpad;
         if (pad == address(0)) revert NotInitialized();
@@ -176,7 +182,11 @@ contract DiggersCoin is IDiggersCoin {
         }
     }
 
-    /// @inheritdoc IDiggersCoin
+    /// @notice Close the airdrop: claim accrued ETH from the launchpad, mint 50% of
+    ///         final supply to the team treasury and 10% as LP (paired with all accrued
+    ///         ETH on Uniswap V2; LP tokens burned to the dead address for permanent
+    ///         liquidity), unlock transfers, and freeze supply forever. Permissionless,
+    ///         once only, after the airdrop window has fully elapsed.
     function finalize() external nonReentrant {
         address pad = launchpad;
         if (pad == address(0)) revert NotInitialized();
@@ -223,14 +233,14 @@ contract DiggersCoin is IDiggersCoin {
 
     // --------------------------------------------------------------- ERC20
 
-    /// @inheritdoc IDiggersCoin
+    /// @notice Standard ERC-20 transfer. Reverts `TransfersLocked` until finalized.
     function transfer(address to, uint256 amount) external returns (bool) {
         if (to == address(0)) revert ZeroAddress();
         _update(msg.sender, to, amount);
         return true;
     }
 
-    /// @inheritdoc IDiggersCoin
+    /// @notice Standard ERC-20 approval.
     function approve(address spender, uint256 amount) external returns (bool) {
         if (spender == address(0)) revert ZeroAddress();
         _allowances[msg.sender][spender] = amount;
@@ -238,7 +248,9 @@ contract DiggersCoin is IDiggersCoin {
         return true;
     }
 
-    /// @inheritdoc IDiggersCoin
+    /// @notice Standard ERC-20 transferFrom with allowance check. Infinite allowance
+    ///         (`type(uint256).max`) skips deduction. Reverts `TransfersLocked` until
+    ///         finalized.
     function transferFrom(address from, address to, uint256 amount) external returns (bool) {
         if (to == address(0)) revert ZeroAddress();
         uint256 allowed = _allowances[from][msg.sender];
@@ -252,7 +264,7 @@ contract DiggersCoin is IDiggersCoin {
         return true;
     }
 
-    /// @inheritdoc IDiggersCoin
+    /// @notice Burns `amount` from the caller, reducing total supply forever.
     function burn(uint256 amount) external {
         _update(msg.sender, address(0), amount);
     }
@@ -297,49 +309,54 @@ contract DiggersCoin is IDiggersCoin {
 
     // -------------------------------------------------------------------- views
 
-    /// @inheritdoc IDiggersCoin
+    /// @notice Returns the token name: "Diggers".
     function name() external pure returns (string memory) {
         return "Diggers";
     }
 
-    /// @inheritdoc IDiggersCoin
+    /// @notice Returns the token symbol: "DIG".
     function symbol() external pure returns (string memory) {
         return "DIG";
     }
 
-    /// @inheritdoc IDiggersCoin
+    /// @notice Returns 18 decimals.
     function decimals() external pure returns (uint8) {
         return 18;
     }
 
-    /// @inheritdoc IDiggersCoin
+    /// @notice Current total supply (grows during airdrop minting and finalize; decreases on burns).
     function totalSupply() external view returns (uint256) {
         return _totalSupply;
     }
 
-    /// @inheritdoc IDiggersCoin
+    /// @notice Token balance of `account`.
     function balanceOf(address account) external view returns (uint256) {
         return _balances[account];
     }
 
-    /// @inheritdoc IDiggersCoin
+    /// @notice Remaining allowance that `spender` may transfer from `owner`.
     function allowance(address owner, address spender) external view returns (uint256) {
         return _allowances[owner][spender];
     }
 
-    /// @inheritdoc IDiggersCoin
+    /// @notice Current coins minted per 1 ETH of platform fee (18 dec per 1e18 wei).
+    ///         Halves every 7 days: 100k → 50k → 25k → 12.5k → 6.25k. Returns 0 after
+    ///         the airdrop window ends.
     function currentRate() external view returns (uint256) {
         address pad = launchpad;
         if (pad == address(0) || !IDiggers(pad).airdropActive()) return 0;
         return _weekRate();
     }
 
-    /// @inheritdoc IDiggersCoin
+    /// @notice Projected final supply if the airdrop ended now: airdropped × 2.5
+    ///         (40% airdrop / 10% LP / 50% team).
     function projectedFinalSupply() external view returns (uint256) {
         return airdroppedSupply * (TEAM_NUM + LP_NUM + PCT) / PCT; // airdropped * 2.5
     }
 
-    /// @inheritdoc IDiggersCoin
+    /// @notice Implied wei-per-coin at the future LP price: realEth / (0.25 × airdropped).
+    ///         `realEth` = this contract's ETH balance + pending platform ETH owed by the
+    ///         launchpad. Returns 0 if no supply has been airdropped yet.
     function impliedPriceWeiPerToken() public view returns (uint256) {
         uint256 lpAlloc = airdroppedSupply * LP_NUM / PCT; // 0.25 * airdropped
         if (lpAlloc == 0) return 0;
@@ -349,12 +366,13 @@ contract DiggersCoin is IDiggersCoin {
         return DiggerMath.md512(realEth, WAD, lpAlloc);
     }
 
-    /// @inheritdoc IDiggersCoin
+    /// @notice ETH value of `user`'s holding at the implied LP price (wei).
     function holdingValueEth(address user) external view returns (uint256) {
         return DiggerMath.md512(_balances[user], impliedPriceWeiPerToken(), WAD);
     }
 
-    /// @inheritdoc IDiggersCoin
+    /// @notice Seconds remaining in the airdrop window. Returns 0 if the launchpad is not
+    ///         initialized, the airdrop has not started, or it has already ended.
     function airdropSecondsLeft() external view returns (uint256) {
         address pad = launchpad;
         if (pad == address(0)) return 0;

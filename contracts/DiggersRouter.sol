@@ -191,7 +191,17 @@ contract DiggersRouter is IDiggersRouter {
 
     // ----------------------------------------------------------- external: trade
 
-    /// @inheritdoc IDiggersRouter
+    /// @notice Buy `token` with ETH, skimming the router fee off `msg.value` first.
+    ///         `msg.sender` pays the ETH and is recorded as the `trader`; the purchased
+    ///         tokens are delivered to `recipient`. Routes through V2, V3, or V4 depending
+    ///         on `venue`. Reverts if output < `minOut` or `deadline` expired.
+    /// @param token The token to receive.
+    /// @param venue AMM family to route through (V2/V3/V4).
+    /// @param pool abi-encoded pool/pair address (V2/V3) or PoolKey (V4).
+    /// @param minOut Minimum tokens out (slippage floor).
+    /// @param deadline Unix seconds after which the trade reverts.
+    /// @param recipient Address that receives the purchased tokens (must be non-zero).
+    /// @return tokenAmount Tokens delivered to `recipient`.
     function buy(address token, Venue venue, bytes calldata pool, uint256 minOut, uint256 deadline, address recipient)
         external
         payable
@@ -251,7 +261,18 @@ contract DiggersRouter is IDiggersRouter {
         );
     }
 
-    /// @inheritdoc IDiggersRouter
+    /// @notice Sell `token` for ETH, skimming the router fee off the ETH output.
+    ///         Requires a prior ERC-20 approval of `amountIn` to this router. `msg.sender`
+    ///         supplies the tokens and is recorded as the `trader`; the net ETH (after fee)
+    ///         is paid to `recipient`. Reverts if output < `minOut` or `deadline` expired.
+    /// @param token The token to sell.
+    /// @param venue AMM family to route through (V2/V3/V4).
+    /// @param pool abi-encoded pool/pair address (V2/V3) or PoolKey (V4).
+    /// @param amountIn Exact token amount to sell.
+    /// @param minOut Minimum ETH out after fee (slippage floor).
+    /// @param deadline Unix seconds after which the trade reverts.
+    /// @param recipient Address that receives the net ETH (must be non-zero).
+    /// @return ethOut ETH paid to `recipient` (net of the router fee).
     function sell(
         address token,
         Venue venue,
@@ -374,7 +395,9 @@ contract DiggersRouter is IDiggersRouter {
 
     // ------------------------------------------------------------- external: admin
 
-    /// @inheritdoc IDiggersRouter
+    /// @notice Sweep all accrued ETH fees to the current `feeRecipient`. Permissionless —
+    ///         anyone may call.
+    /// @return amount ETH swept (wei).
     function sweep() external returns (uint256 amount) {
         amount = address(this).balance;
         if (amount == 0) return 0;
@@ -383,7 +406,7 @@ contract DiggersRouter is IDiggersRouter {
         emit FeeSwept(to, amount);
     }
 
-    /// @inheritdoc IDiggersRouter
+    /// @notice Owner-only: set the fee rate (1e18-scaled), capped at `MAX_FEE_WAD`.
     function setFeeWad(uint256 newFeeWad) external onlyOwner {
         if (newFeeWad > MAX_FEE_WAD) revert FeeTooHigh();
         uint256 old = feeWad;
@@ -391,7 +414,7 @@ contract DiggersRouter is IDiggersRouter {
         emit FeeUpdated(old, newFeeWad);
     }
 
-    /// @inheritdoc IDiggersRouter
+    /// @notice Owner-only: rotate the fee recipient (must be non-zero).
     function setFeeRecipient(address newRecipient) external onlyOwner {
         if (newRecipient == address(0)) revert ZeroAddress();
         address old = feeRecipient;
@@ -399,7 +422,8 @@ contract DiggersRouter is IDiggersRouter {
         emit FeeRecipientUpdated(old, newRecipient);
     }
 
-    /// @inheritdoc IDiggersRouter
+    /// @notice Owner-only: hand ownership to `newOwner` (or address(0) to renounce —
+    ///         freezes the fee forever).
     function transferOwnership(address newOwner) external onlyOwner {
         address old = owner;
         owner = newOwner;
@@ -408,12 +432,12 @@ contract DiggersRouter is IDiggersRouter {
 
     // ---------------------------------------------------------------- views
 
-    /// @inheritdoc IDiggersRouter
+    /// @notice Accrued, unswept ETH fees (wei) = the router's ETH balance at rest.
     function pendingFees() external view returns (uint256) {
         return address(this).balance;
     }
 
-    /// @inheritdoc IDiggersRouter
+    /// @notice The canonical V3 pool for (WETH, `token`, `feeTier`) per the pinned factory.
     function poolFor(address token, uint24 feeTier) external view returns (address) {
         return IUniswapV3Factory(V3_FACTORY).getPool(WETH, token, feeTier);
     }
