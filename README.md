@@ -15,7 +15,8 @@
   <a href="https://diggers.fun/doc">Docs</a> ·
   <a href="https://x.com/diggersdotfun">𝕏</a> ·
   <a href="https://t.me/diggersdotfun">Telegram</a> ·
-  <a href="./INTEGRATIONS.md">Integrations</a>
+  <a href="./INTEGRATIONS.md">Integrations</a> ·
+  <a href="./EXAMPLES.md">Examples</a>
 </p>
 
 ---
@@ -578,6 +579,13 @@ Aggregators, wallets, and portfolio trackers — see
 [**INTEGRATIONS.md**](./INTEGRATIONS.md) for public REST endpoints (token info,
 Uniswap token list), deployed contract addresses, on-chain metadata, and
 graduation criteria.
+
+## On-chain examples
+
+Real sample transactions for every operation (create, buy, sell, harvest,
+epoch settlement), full event topic0 reference, function selectors, and
+pre-filled answers for terminal listing forms — see
+[**EXAMPLES.md**](./EXAMPLES.md).
 
 ## Building
 
